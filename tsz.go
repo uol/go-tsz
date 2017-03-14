@@ -2,7 +2,7 @@
 /*
 
 http://www.vldb.org/pvldb/vol8/p1816-teller.pdf
-
+with 32-bit floats and timestamps in seconds
 */
 package tsz
 
