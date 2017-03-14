@@ -2,14 +2,16 @@ package main
 
 import (
 	"fmt"
-	"github.com/dgryski/go-tsz"
-	"github.com/dgryski/go-tsz/testdata"
 	"math"
 	"math/rand"
 	"os"
 	"text/tabwriter"
+
+	"github.com/dgryski/go-tsz"
+	"github.com/dgryski/go-tsz/testdata"
 )
 
+//TODO: change to float32
 // collection of 24h worth of minutely points, with different characteristics.
 var ConstantZero = make([]testdata.Point, 60*24)
 var ConstantOne = make([]testdata.Point, 60*24)

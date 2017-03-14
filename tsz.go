@@ -7,88 +7,54 @@ http://www.vldb.org/pvldb/vol8/p1816-teller.pdf
 package tsz
 
 import (
-	"bytes"
-	"encoding/binary"
-	"io"
 	"math"
 	"sync"
 
-	"github.com/dgryski/go-bits"
+	bits "github.com/uol/go-bits"
 )
 
-// Series is the basic series primitive
-// you can concurrently put values, finish the stream, and create iterators
-type Series struct {
+type Encoder struct {
 	sync.Mutex
 
-	// TODO(dgryski): timestamps in the paper are uint64
-	T0  uint32
-	t   uint32
-	val float64
+	t0    int64
+	t     int64
+	val32 float32
 
 	bw       bstream
 	leading  uint8
 	trailing uint8
 	finished bool
 
-	tDelta uint32
+	tDelta int64
 }
 
-// New series
-func New(t0 uint32) *Series {
-	s := Series{
-		T0:      t0,
+func NewEncoder(t0 int64) *Encoder {
+	return &Encoder{
+		t0:      t0,
 		leading: ^uint8(0),
 	}
-
-	// block header
-	s.bw.writeBits(uint64(t0), 32)
-
-	return &s
-
 }
 
-// Bytes value of the series stream
-func (s *Series) Bytes() []byte {
-	s.Lock()
-	defer s.Unlock()
-	return s.bw.bytes()
-}
+func (s *Encoder) Encode(t int64, v float32) {
 
-func finish(w *bstream) {
-	// write an end-of-stream record
-	w.writeBits(0x0f, 4)
-	w.writeBits(0xffffffff, 32)
-	w.writeBit(zero)
-}
-
-// Finish the series by writing an end-of-stream record
-func (s *Series) Finish() {
-	s.Lock()
-	if !s.finished {
-		finish(&s.bw)
-		s.finished = true
-	}
-	s.Unlock()
-}
-
-// Push a timestamp and value to the series
-func (s *Series) Push(t uint32, v float64) {
 	s.Lock()
 	defer s.Unlock()
 
 	if s.t == 0 {
 		// first point
 		s.t = t
-		s.val = v
-		s.tDelta = t - s.T0
+		s.val32 = v
+		s.tDelta = t - s.t0
+
 		s.bw.writeBits(uint64(s.tDelta), 14)
-		s.bw.writeBits(math.Float64bits(v), 64)
+
+		s.bw.writeBits(uint64(math.Float32bits(v)), 32)
 		return
 	}
 
 	tDelta := t - s.t
-	dod := int32(tDelta - s.tDelta)
+
+	dod := int64(tDelta - s.tDelta)
 
 	switch {
 	case dod == 0:
@@ -107,63 +73,75 @@ func (s *Series) Push(t uint32, v float64) {
 		s.bw.writeBits(uint64(dod), 32)
 	}
 
-	vDelta := math.Float64bits(v) ^ math.Float64bits(s.val)
+	vDelta := math.Float32bits(v) ^ math.Float32bits(s.val32)
 
 	if vDelta == 0 {
 		s.bw.writeBit(zero)
 	} else {
+
 		s.bw.writeBit(one)
 
-		leading := uint8(bits.Clz(vDelta))
-		trailing := uint8(bits.Ctz(vDelta))
+		leading := uint8(bits.Clz32(uint64(vDelta)))
+		trailing := uint8(bits.Ctz32(uint64(vDelta)))
 
 		// clamp number of leading zeros to avoid overflow when encoding
-		if leading >= 32 {
-			leading = 31
+		if leading >= 16 {
+			leading = 15
 		}
 
 		// TODO(dgryski): check if it's 'cheaper' to reset the leading/trailing bits instead
 		if s.leading != ^uint8(0) && leading >= s.leading && trailing >= s.trailing {
+
 			s.bw.writeBit(zero)
-			s.bw.writeBits(vDelta>>s.trailing, 64-int(s.leading)-int(s.trailing))
+
+			s.bw.writeBits(uint64(vDelta>>s.trailing), int(32-int(s.leading)-int(s.trailing)))
+
 		} else {
+
 			s.leading, s.trailing = leading, trailing
 
 			s.bw.writeBit(one)
-			s.bw.writeBits(uint64(leading), 5)
 
-			// Note that if leading == trailing == 0, then sigbits == 64.  But that value doesn't actually fit into the 6 bits we have.
+			s.bw.writeBits(uint64(leading), 4)
+
+			// Note that if leading == trailing == 0, then sigbits == 32.  But that value doesn't actually fit into the 5 bits we have.
 			// Luckily, we never need to encode 0 significant bits, since that would put us in the other case (vdelta == 0).
-			// So instead we write out a 0 and adjust it back to 64 on unpacking.
-			sigbits := 64 - leading - trailing
-			s.bw.writeBits(uint64(sigbits), 6)
-			s.bw.writeBits(vDelta>>trailing, int(sigbits))
+			// So instead we write out a 0 and adjust it back to 32 on unpacking.
+			sigbits := 32 - leading - trailing
+			s.bw.writeBits(uint64(sigbits), 5)
+
+			s.bw.writeBits(uint64(vDelta>>trailing), int(sigbits))
+
 		}
 	}
 
 	s.tDelta = tDelta
 	s.t = t
-	s.val = v
+	s.val32 = v
 
 }
 
-// Iter lets you iterate over a series.  It is not concurrency-safe.
-func (s *Series) Iter() *Iter {
+func (s *Encoder) Close() ([]byte, error) {
 	s.Lock()
-	w := s.bw.clone()
-	s.Unlock()
+	if !s.finished {
+		s.bw.writeBits(0x0f, 4)
 
-	finish(w)
-	iter, _ := bstreamIterator(w)
-	return iter
+		s.bw.writeBits(0xffffffff, 32)
+
+		s.bw.writeBit(zero)
+
+		s.finished = true
+	}
+
+	s.Unlock()
+	return s.bw.bytes(), nil
 }
 
-// Iter lets you iterate over a series.  It is not concurrency-safe.
-type Iter struct {
-	T0 uint32
+type Decoder struct {
+	T0 int64
 
-	t   uint32
-	val float64
+	t   int64
+	val float32
 
 	br       bstream
 	leading  uint8
@@ -171,32 +149,26 @@ type Iter struct {
 
 	finished bool
 
-	tDelta uint32
+	tDelta int64
 	err    error
 }
 
-func bstreamIterator(br *bstream) (*Iter, error) {
+func NewDecoder(b []byte, t0 int64) *Decoder {
 
-	br.count = 8
-
-	t0, err := br.readBits(32)
-	if err != nil {
-		return nil, err
+	br := bstream{
+		count:  8,
+		stream: b,
 	}
 
-	return &Iter{
-		T0: uint32(t0),
-		br: *br,
-	}, nil
+	s := Decoder{
+		br: br,
+		T0: int64(t0),
+	}
+
+	return &s
 }
 
-// NewIterator for the series
-func NewIterator(b []byte) (*Iter, error) {
-	return bstreamIterator(newBReader(b))
-}
-
-// Next iteration of the series iterator
-func (it *Iter) Next() bool {
+func (it *Decoder) Scan(t *int64, f *float32) bool {
 
 	if it.err != nil || it.finished {
 		return false
@@ -209,15 +181,18 @@ func (it *Iter) Next() bool {
 			it.err = err
 			return false
 		}
-		it.tDelta = uint32(tDelta)
+		it.tDelta = int64(tDelta)
 		it.t = it.T0 + it.tDelta
-		v, err := it.br.readBits(64)
+		v, err := it.br.readBits(32)
 		if err != nil {
 			it.err = err
 			return false
 		}
 
-		it.val = math.Float64frombits(v)
+		it.val = math.Float32frombits(uint32(v))
+
+		*t = it.t
+		*f = it.val
 
 		return true
 	}
@@ -231,13 +206,13 @@ func (it *Iter) Next() bool {
 			it.err = err
 			return false
 		}
-		if bit == zero {
+		if !bit {
 			break
 		}
 		d |= 1
 	}
 
-	var dod int32
+	var dod int64
 	var sz uint
 	switch d {
 	case 0x00:
@@ -261,7 +236,7 @@ func (it *Iter) Next() bool {
 			return false
 		}
 
-		dod = int32(bits)
+		dod = int64(bits)
 	}
 
 	if sz != 0 {
@@ -274,10 +249,10 @@ func (it *Iter) Next() bool {
 			// or something
 			bits = bits - (1 << sz)
 		}
-		dod = int32(bits)
+		dod = int64(bits)
 	}
 
-	tDelta := it.tDelta + uint32(dod)
+	tDelta := it.tDelta + dod
 
 	it.tDelta = tDelta
 	it.t = it.t + it.tDelta
@@ -289,7 +264,7 @@ func (it *Iter) Next() bool {
 		return false
 	}
 
-	if bit == zero {
+	if !bit {
 		// it.val = it.val
 	} else {
 		bit, itErr := it.br.readBit()
@@ -297,113 +272,48 @@ func (it *Iter) Next() bool {
 			it.err = err
 			return false
 		}
-		if bit == zero {
+		if !bit {
 			// reuse leading/trailing zero bits
 			// it.leading, it.trailing = it.leading, it.trailing
 		} else {
-			bits, err := it.br.readBits(5)
+			bits, err := it.br.readBits(4)
 			if err != nil {
 				it.err = err
 				return false
 			}
 			it.leading = uint8(bits)
 
-			bits, err = it.br.readBits(6)
+			bits, err = it.br.readBits(5)
 			if err != nil {
 				it.err = err
 				return false
 			}
 			mbits := uint8(bits)
-			// 0 significant bits here means we overflowed and we actually need 64; see comment in encoder
+			// 0 significant bits here means we overflowed and we actually need 32; see comment in encoder
 			if mbits == 0 {
-				mbits = 64
+				mbits = 32
 			}
-			it.trailing = 64 - it.leading - mbits
+			it.trailing = 32 - it.leading - mbits
 		}
 
-		mbits := int(64 - it.leading - it.trailing)
+		mbits := int(32 - it.leading - it.trailing)
 		bits, err := it.br.readBits(mbits)
 		if err != nil {
 			it.err = err
 			return false
 		}
-		vbits := math.Float64bits(it.val)
+		vbits := uint64(math.Float32bits(it.val))
 		vbits ^= (bits << it.trailing)
-		it.val = math.Float64frombits(vbits)
+		it.val = math.Float32frombits(uint32(vbits))
 	}
+
+	*t = it.t
+	*f = it.val
 
 	return true
 }
 
-// Values at the current iterator position
-func (it *Iter) Values() (uint32, float64) {
-	return it.t, it.val
-}
-
 // Err error at the current iterator position
-func (it *Iter) Err() error {
+func (it *Decoder) Close() error {
 	return it.err
-}
-
-type errMarshal struct {
-	w   io.Writer
-	r   io.Reader
-	err error
-}
-
-func (em *errMarshal) write(t interface{}) {
-	if em.err != nil {
-		return
-	}
-	em.err = binary.Write(em.w, binary.BigEndian, t)
-}
-
-func (em *errMarshal) read(t interface{}) {
-	if em.err != nil {
-		return
-	}
-	em.err = binary.Read(em.r, binary.BigEndian, t)
-}
-
-// MarshalBinary implements the encoding.BinaryMarshaler interface
-func (s *Series) MarshalBinary() ([]byte, error) {
-	buf := new(bytes.Buffer)
-	em := &errMarshal{w: buf}
-	em.write(s.T0)
-	em.write(s.leading)
-	em.write(s.t)
-	em.write(s.tDelta)
-	em.write(s.trailing)
-	em.write(s.val)
-	bStream, err := s.bw.MarshalBinary()
-	if err != nil {
-		return nil, err
-	}
-	em.write(bStream)
-	if em.err != nil {
-		return nil, em.err
-	}
-	return buf.Bytes(), nil
-}
-
-// UnmarshalBinary implements the encoding.BinaryUnmarshaler interface
-func (s *Series) UnmarshalBinary(b []byte) error {
-	buf := bytes.NewReader(b)
-	em := &errMarshal{r: buf}
-	em.read(&s.T0)
-	em.read(&s.leading)
-	em.read(&s.t)
-	em.read(&s.tDelta)
-	em.read(&s.trailing)
-	em.read(&s.val)
-	outBuf := make([]byte, buf.Len())
-	em.read(outBuf)
-	err := s.bw.UnmarshalBinary(outBuf)
-	if err != nil {
-		return err
-	}
-	if em.err != nil {
-		return em.err
-	}
-	return nil
 }
