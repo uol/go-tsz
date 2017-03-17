@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/uol/custom/testdata"
+	"github.com/uol/go-tsz/testdata"
 )
 
 func TestExampleEncoding(t *testing.T) {
