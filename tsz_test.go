@@ -228,3 +228,66 @@ func TestEncodeSimilarFloats(t *testing.T) {
 		t.Errorf("it.Err()=%v, want nil", err)
 	}
 }
+
+func TestDoubleDecode(t *testing.T) {
+
+	enc := NewEncoder(testdata.TwoHoursData[0].T)
+	for _, p := range testdata.TwoHoursData {
+		enc.Encode(p.T, p.V)
+	}
+
+	b, err := enc.Close()
+	if err != nil {
+		t.Errorf("enc.Close()=%v, want nil", err)
+	}
+
+	dec := NewDecoder(b, testdata.TwoHoursData[0].T)
+
+	var ts int64
+	var val float32
+
+	for _, w := range testdata.TwoHoursData {
+
+		next := dec.Scan(&ts, &val)
+
+		if !next {
+			t.Fatalf("next=false, want true")
+		}
+
+		if w.T != ts || w.V != val {
+			t.Errorf("Values()=(%v,%v), want (%v,%v)\n", ts, val, w.T, w.V)
+		}
+	}
+
+	if dec.Scan(&ts, &val) {
+		t.Fatalf("dec.Scan()=true, want false")
+	}
+
+	if err := dec.Close(); err != nil {
+		t.Errorf("dec.Close()=%v, want nil", err)
+	}
+
+	dec = NewDecoder(b, testdata.TwoHoursData[0].T)
+
+	for _, w := range testdata.TwoHoursData {
+
+		next := dec.Scan(&ts, &val)
+
+		if !next {
+			t.Fatalf("next=false, want true")
+		}
+
+		if w.T != ts || w.V != val {
+			t.Errorf("Values()=(%v,%v), want (%v,%v)\n", ts, val, w.T, w.V)
+		}
+	}
+
+	if dec.Scan(&ts, &val) {
+		t.Fatalf("dec.Scan()=true, want false")
+	}
+
+	if err := dec.Close(); err != nil {
+		t.Errorf("dec.Close()=%v, want nil", err)
+	}
+
+}
