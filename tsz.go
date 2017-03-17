@@ -155,17 +155,19 @@ type Decoder struct {
 
 func NewDecoder(b []byte, t0 int64) *Decoder {
 
+	stream := make([]byte, len(b))
+
+	copy(stream, b)
+
 	br := bstream{
 		count:  8,
-		stream: b,
+		stream: stream,
 	}
 
-	s := Decoder{
+	return &Decoder{
 		br: br,
 		T0: int64(t0),
 	}
-
-	return &s
 }
 
 func (it *Decoder) Scan(t *int64, f *float32) bool {
