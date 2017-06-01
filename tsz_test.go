@@ -292,3 +292,148 @@ func TestDoubleDecode(t *testing.T) {
 	}
 
 }
+
+func TestEncodingOnePoint(t *testing.T) {
+
+	// Example from the paper
+	t0, _ := time.ParseInLocation("Jan _2 2006 15:04:05", "Mar 24 2015 02:00:00", time.Local)
+	tunix := t0.Unix()
+
+	enc := NewEncoder(tunix)
+
+	value := -float32(9.999999)
+
+	enc.Encode(tunix, value)
+
+	b, err := enc.Close()
+	if err != nil {
+		t.Errorf(err.Error())
+	}
+
+	t.Logf("byte size=%v", len(b))
+
+	dec := NewDecoder(b)
+
+	tunix = t0.Unix()
+	want := []struct {
+		t int64
+		v float32
+	}{
+		{tunix, value},
+	}
+
+	var ts int64
+	var val float32
+
+	for _, w := range want {
+
+		next := dec.Scan(&ts, &val)
+
+		if !next {
+			t.Fatalf("Next()=false, want true")
+		} else {
+			if w.t != ts || w.v != val {
+				t.Errorf("Values()=(%v,%v), want (%v,%v)\n", ts, val, w.t, w.v)
+			}
+		}
+
+		t.Logf("read time=%v value=%v", ts, val)
+
+		if !next {
+			t.Fatalf("next=false, want true")
+		}
+
+	}
+
+	if dec.Scan(&ts, &val) {
+		t.Fatalf("dec.Scan()=true, want false")
+	}
+
+	if err := dec.Close(); err != nil {
+		t.Errorf("dec.Close()=%v, want nil", err)
+	}
+}
+
+func TestEncodingSparsePoints(t *testing.T) {
+
+	// Example from the paper
+	t0 := time.Unix(1448452800, 0).UTC()
+	tunix := t0.Unix()
+
+	enc := NewEncoder(tunix)
+
+	want := []struct {
+		t int64
+		v float32
+	}{
+		{tunix, 0},
+		{tunix + 60, 1},
+		{tunix + 120, 1},
+		{tunix + 180, 3},
+		{tunix + 240, 4},
+		{tunix + 300, 5},
+		{tunix + 360, 6},
+		{tunix + 420, 7},
+		{tunix + 480, 8},
+		{tunix + 540, 9},
+		{tunix + 600, 10},
+		{tunix + 660, 11},
+		{tunix + 720, 12},
+		{tunix + 780, 13},
+		{tunix + 840, 14},
+		{tunix + 4500, 75},
+		{tunix + 4560, 76},
+		{tunix + 4620, 77},
+		{tunix + 4680, 78},
+		{tunix + 4740, 79},
+		{tunix + 4800, 80},
+		{tunix + 4860, 81},
+		{tunix + 4920, 82},
+		{tunix + 4980, 83},
+		{tunix + 5040, 84},
+		{tunix + 5100, 85},
+		{tunix + 5160, 86},
+		{tunix + 5220, 87},
+		{tunix + 5280, 88},
+		{tunix + 5340, 89},
+	}
+
+	for _, v := range want {
+		enc.Encode(v.t, float32(v.v))
+	}
+
+	be, err := enc.Close()
+	if err != nil {
+		t.Errorf("enc.Close()=%v, want nil", err)
+	}
+
+	dec := NewDecoder(be)
+
+	var ts int64
+	var f float32
+	var next bool
+
+	for _, w := range want {
+
+		next = dec.Scan(&ts, &f)
+
+		if !next {
+			t.Fatalf("Next()=false, want true")
+		}
+		if w.t != ts || w.v != f {
+			t.Errorf("Values()=(%v,%v), want (%v,%v)\n", ts, f, w.t, w.v)
+		} else {
+			t.Logf("Values()=(%v,%v), want (%v,%v)\n", ts, f, w.t, w.v)
+		}
+	}
+
+	next = dec.Scan(&ts, &f)
+
+	if next {
+		t.Fatalf("Next()=true, want false")
+	}
+
+	if err := dec.Close(); err != nil {
+		t.Errorf("it.Err()=%v, want nil", err)
+	}
+}
