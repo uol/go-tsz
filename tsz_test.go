@@ -437,3 +437,170 @@ func TestEncodingSparsePoints(t *testing.T) {
 		t.Errorf("it.Err()=%v, want nil", err)
 	}
 }
+
+func TestEncodingDecodingNoClose(t *testing.T) {
+
+	// Example from the paper
+	t0 := time.Unix(1448452800, 0).UTC()
+	tunix := t0.Unix()
+
+	enc := NewEncoder(tunix)
+
+	want := []struct {
+		t int64
+		v float32
+	}{
+		{tunix, 0},
+		{tunix + 60, 1},
+		{tunix + 120, 1},
+		{tunix + 180, 3},
+		{tunix + 240, 4},
+		{tunix + 300, 5},
+		{tunix + 360, 6},
+		{tunix + 420, 7},
+		{tunix + 480, 8},
+		{tunix + 540, 9},
+		{tunix + 600, 10},
+		{tunix + 660, 11},
+		{tunix + 720, 12},
+		{tunix + 780, 13},
+		{tunix + 840, 14},
+		{tunix + 4500, 75},
+		{tunix + 4560, 76},
+		{tunix + 4620, 77},
+		{tunix + 4680, 78},
+		{tunix + 4740, 79},
+		{tunix + 4800, 80},
+		{tunix + 4860, 81},
+		{tunix + 4920, 82},
+		{tunix + 4980, 83},
+		{tunix + 5040, 84},
+		{tunix + 5100, 85},
+		{tunix + 5160, 86},
+		{tunix + 5220, 87},
+		{tunix + 5280, 88},
+		{tunix + 5340, 89},
+	}
+
+	for _, v := range want {
+		enc.Encode(v.t, float32(v.v))
+	}
+
+	ptsBytes := enc.Get()
+
+	_, err := enc.Close()
+	if err != nil {
+		t.Errorf("enc.Close()=%v, want nil", err)
+	}
+
+	dec := NewDecoder(ptsBytes)
+
+	var ts int64
+	var f float32
+	var next bool
+
+	for _, w := range want {
+
+		next = dec.Scan(&ts, &f)
+
+		if !next {
+			t.Fatalf("Next()=false, want true")
+		}
+		if w.t != ts || w.v != f {
+			t.Errorf("Values()=(%v,%v), want (%v,%v)\n", ts, f, w.t, w.v)
+		} else {
+			t.Logf("Values()=(%v,%v), want (%v,%v)\n", ts, f, w.t, w.v)
+		}
+	}
+
+	next = dec.Scan(&ts, &f)
+
+	if next {
+		t.Fatalf("Next()=true, want false")
+	}
+
+	if err := dec.Close(); err != nil {
+		t.Errorf("it.Err()=%v, want nil", err)
+	}
+}
+
+func TestEncodingDecodingHourHead(t *testing.T) {
+
+	// Example from the paper
+	t0 := time.Unix(1448452800, 0).UTC()
+	tunix := t0.Unix()
+
+	enc := NewEncoder(tunix)
+
+	want := []struct {
+		t int64
+		v float32
+	}{
+		{tunix + 33, 1},
+		{tunix + 120, 2},
+		{tunix + 181, 3},
+		{tunix + 245, 4},
+		{tunix + 309, 5},
+		{tunix + 368, 6},
+		{tunix + 422, 7},
+		{tunix + 484, 8},
+		{tunix + 547, 9},
+		{tunix + 604, 10},
+		{tunix + 662, 11},
+		{tunix + 721, 12},
+		{tunix + 780, 13},
+		{tunix + 840, 14},
+		{tunix + 4501, 75},
+		{tunix + 4564, 76},
+		{tunix + 4626, 77},
+		{tunix + 4687, 78},
+		{tunix + 4748, 79},
+		{tunix + 4809, 80},
+		{tunix + 4861, 81},
+		{tunix + 4920, 82},
+		{tunix + 4980, 83},
+		{tunix + 5040, 84},
+		{tunix + 5101, 85},
+		{tunix + 5162, 86},
+		{tunix + 5223, 87},
+		{tunix + 5280, 88},
+		{tunix + 5347, 89},
+		{tunix + 7199, 0.5},
+	}
+
+	for _, v := range want {
+		enc.Encode(v.t, float32(v.v))
+	}
+
+	ptsBytes, _ := enc.Close()
+
+	dec := NewDecoder(ptsBytes)
+
+	var ts int64
+	var f float32
+	var next bool
+
+	for _, w := range want {
+
+		next = dec.Scan(&ts, &f)
+
+		if !next {
+			t.Fatalf("Next()=false, want true")
+		}
+		if w.t != ts || w.v != f {
+			t.Errorf("Values()=(%v,%v), want (%v,%v)\n", ts, f, w.t, w.v)
+		} else {
+			t.Logf("Values()=(%v,%v), want (%v,%v)\n", ts, f, w.t, w.v)
+		}
+	}
+
+	next = dec.Scan(&ts, &f)
+
+	if next {
+		t.Fatalf("Next()=true, want false")
+	}
+
+	if err := dec.Close(); err != nil {
+		t.Errorf("it.Err()=%v, want nil", err)
+	}
+}
